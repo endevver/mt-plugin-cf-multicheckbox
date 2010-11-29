@@ -2,6 +2,61 @@ package MultiCheckbox::Plugin;
 
 use strict;
 use MT::Util qw( dirify );
+use Text::ParseWords;
+
+sub _find_label {
+    my ($search_for,$options_val) = @_;
+    my @options = quotewords(',' => 0, $options_val);
+    foreach (@options) {
+        my ($label,$value);
+        if ($_ =~ /=/) {
+            ($value,$label) = split(/=/,$_);
+        } else {
+            $value = $label = $_;
+        }
+        if ($search_for eq $value) {
+            return $label;
+        }
+    }
+    return $search_for;
+}
+
+sub load_tags {
+    my $tags = {};
+    # Grab the field definitions, then use those definitions to load the
+    # appropriate objects. Finally, turn those into a block tag.
+    my @field_defs = MT->model('field')->load({
+        type => 'multi_checkbox',
+    });
+    foreach my $field_def (@field_defs) {
+        my $tag = $field_def->tag;
+        # Load the objects (entry, author, whatever) based on the current
+        # field definition.
+        my $obj_type = $field_def->obj_type;
+        my $basename = 'field.' . $field_def->basename;
+        # Create the actual tag Use the tag name and append "Loop" to it.
+        $tags->{block}->{$tag . 'Loop'} = sub {
+            my ( $ctx, $args, $cond ) = @_;
+            # Use the $obj_type to figure out what context we're in.
+            my $obj        = $ctx->stash($obj_type);
+            my $out        = '';
+            my $vars       = $ctx->{__stash}{vars};
+            my $count      = 0;
+            my $obj_value  = $obj->meta($basename);
+            my @values     = split(/,/,$obj_value);
+            foreach my $value (@values) {
+                local $vars->{'__first__'}    = ($count == 0);
+                local $vars->{'__last__'}     = ($count == scalar @values);
+                local $vars->{'__label__'}    = _find_label($value,$field_def->options);
+                local $vars->{'__value__'}    = $value;
+                defined( $out .= $ctx->slurp( $args, $cond ) ) or return;
+                $count++;
+            }
+            return $out;
+        };
+    }
+    return $tags;
+}
 
 sub load_customfield_types {
     return {
@@ -28,13 +83,20 @@ $(document).ready( function() {
             },
             field_html_params => sub {
                 my ($key, $tmpl_key, $tmpl_param) = @_;
-                my $options = $tmpl_param->{options};
+                my $options_val = $tmpl_param->{options};
+                my @options = quotewords(',' => 0, $options_val);
                 my @loop;
                 my $current = $tmpl_param->{value};
                 my @current_a = split(',',$current);
-                foreach my $value (split(',',$options)) {
+                foreach my $field (@options) {
+                    my ($label,$value);
+                    if ($field =~ /=/) {
+                      ($value,$label) = split(/=/,$field);
+                    } else {
+                      $value = $label = $field;
+                    }
                     push @loop, {
-                        'label'         => $value,
+                        'label'         => $label,
                         'value'         => $value,
                         'selected'      => _value_in_array($value,\@current_a),
                     };
